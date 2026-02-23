@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Pterodactyl Panel & Wings Installer
-# Author: Ashmel AKA ICONIC
+# Author: iconic
 
 # Colors
 RED='\033[0;31m'
