@@ -767,78 +767,82 @@ SYSTEMD
     echo ""
 }
 
-# Install Cloudflare Tunnel
+# Install Cloudflare Tunnel (Token Only - Fixed)
 install_cloudflare_tunnel() {
-    get_fqdn
-    
+
     echo ""
-    echo -e "${YELLOW}Enter your Cloudflare Tunnel Token:${NC}"
-    echo -e "${CYAN}(Get it from: Cloudflare Dashboard -> Zero Trust -> Networks -> Tunnels -> Create)${NC}"
-    read -rp "Token: " CF_TOKEN
-    
-    if [[ -z "$CF_TOKEN" ]]; then
-        echo -e "${RED}Token cannot be empty!${NC}"
+    echo -e "${YELLOW}Enter your Cloudflare Tunnel Token OR full install command:${NC}"
+    echo -e "${CYAN}Example token: eyJhIjoiXXXXXXXXXXXX${NC}"
+    echo -e "${CYAN}Or full command: cloudflared service install eyJhIjoiXXXX${NC}"
+    echo ""
+
+    read -rp "Input: " CF_INPUT
+
+    if [[ -z "$CF_INPUT" ]]; then
+        echo -e "${RED}Input cannot be empty!${NC}"
         return 1
     fi
-    
+
     echo -e "${BLUE}Installing cloudflared...${NC}"
-    
+
     # Detect architecture
     ARCH=$(uname -m)
     case "$ARCH" in
-        x86_64)
-            CF_ARCH="amd64"
-            ;;
-        aarch64)
-            CF_ARCH="arm64"
-            ;;
-        *)
-            error_exit "Unsupported architecture: $ARCH"
-            ;;
+        x86_64) CF_ARCH="amd64" ;;
+        aarch64) CF_ARCH="arm64" ;;
+        *) error_exit "Unsupported architecture: $ARCH" ;;
     esac
-    
+
+    # Install cloudflared based on OS
     case $OS in
         ubuntu|debian)
-            curl -fsSL -o /tmp/cloudflared.deb "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CF_ARCH}.deb"
+            curl -fsSL -o /tmp/cloudflared.deb \
+            "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CF_ARCH}.deb"
             dpkg -i /tmp/cloudflared.deb || apt-get install -f -y
             rm -f /tmp/cloudflared.deb
             ;;
         centos|rhel|rocky|almalinux)
-            curl -fsSL -o /tmp/cloudflared.rpm "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-x86_64.rpm"
+            curl -fsSL -o /tmp/cloudflared.rpm \
+            "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-x86_64.rpm"
             rpm -i /tmp/cloudflared.rpm 2>/dev/null || dnf install -y /tmp/cloudflared.rpm
             rm -f /tmp/cloudflared.rpm
             ;;
+        *)
+            error_exit "Unsupported OS for Cloudflare Tunnel"
+            ;;
     esac
-    
+
     if ! command -v cloudflared &> /dev/null; then
         error_exit "Failed to install cloudflared"
     fi
-    
-    echo -e "${BLUE}Installing Cloudflare Tunnel service...${NC}"
-    cloudflared service install "$CF_TOKEN" || error_exit "Failed to install cloudflared service"
-    
+
+    echo -e "${BLUE}Setting up Cloudflare Tunnel...${NC}"
+
+    # If full command pasted
+    if [[ "$CF_INPUT" == *"cloudflared service install"* ]]; then
+        eval "$CF_INPUT"
+    else
+        # If only token pasted
+        cloudflared service install "$CF_INPUT"
+    fi
+
     systemctl enable cloudflared
     systemctl start cloudflared
-    
-    # Verify service started
+
     sleep 2
+
     if systemctl is-active --quiet cloudflared; then
         echo ""
         echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo -e "${GREEN}   Cloudflare Tunnel Installed!${NC}"
+        echo -e "${GREEN}   Cloudflare Tunnel Installed Successfully!${NC}"
         echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
         echo ""
-        echo -e "${CYAN}Your tunnel is now running!${NC}"
-        echo ""
-        echo -e "${YELLOW}Configure public hostname in Cloudflare Dashboard:${NC}"
-        echo -e "${CYAN}Zero Trust -> Networks -> Tunnels -> Your Tunnel -> Public Hostname${NC}"
-        echo -e "${CYAN}  - Subdomain: panel (or your choice)${NC}"
-        echo -e "${CYAN}  - Domain: your-domain.com${NC}"
-        echo -e "${CYAN}  - Service: http://localhost:80${NC}"
+        echo -e "${CYAN}Tunnel is now running.${NC}"
+        echo -e "${CYAN}Configure public hostname inside Cloudflare Dashboard.${NC}"
         echo ""
     else
-        echo -e "${YELLOW}WARNING: Cloudflare tunnel service may not have started properly.${NC}"
-        echo -e "${YELLOW}Check status with: systemctl status cloudflared${NC}"
+        echo -e "${RED}Cloudflare tunnel failed to start.${NC}"
+        echo -e "${YELLOW}Check with: systemctl status cloudflared${NC}"
     fi
 }
 
