@@ -15,7 +15,7 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-# --- Helper Functions ---
+# --- Animation UI ---
 animate_text() {
     local text="$1"
     local color="$2"
@@ -35,7 +35,6 @@ show_logo() {
         echo -e "${BLUE}              [${chars[i%4]}]${NC}"
         sleep 0.05
     done
-    
     clear
     echo -e "${CYAN}"
     echo "  █████  ███████ ██   ██ ███    ███ ███████ ██      "
@@ -43,26 +42,26 @@ show_logo() {
     echo " ███████ ███████ ███████ ██ ████ ██ █████   ██      "
     echo " ██   ██      ██ ██   ██ ██  ██  ██ ██      ██      "
     echo " ██   ██ ███████ ██   ██ ██      ██ ███████ ███████ "
-    echo -e "${BLUE}          ASHMEL VPS PANEL INSTALLER v3.0${NC}"
+    echo -e "${BLUE}          ASHMEL VPS PANEL INSTALLER v5.0${NC}"
     echo -e "${CYAN}-----------------------------------------------------${NC}"
 }
 
+# --- Panel & Wings Logic ---
 install_panel() {
     show_logo
     echo -e "${CYAN}[ PANEL INSTALLATION ]${NC}"
-    read -p "Panel Domain (e.g., panel.domain.com): " FQDN
+    read -p "Panel Domain (FQDN): " FQDN
     read -p "Admin Email: " ADMIN_EMAIL
     read -s -p "Admin Password: " ADMIN_PASS
     echo -e "\n"
 
-    # Dependency Setup
+    animate_text "Installing LEMP Stack (PHP 8.2, MariaDB, Nginx)..." "$YELLOW"
     apt update -y && apt install -y software-properties-common curl ca-certificates gnupg2 sudo unzip tar git
     LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php
     apt update -y
     apt install -y php8.2 php8.2-{common,cli,gd,mysql,mbstring,bcmath,xml,fpm,curl,zip} nginx mariadb-server redis-server
     curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
 
-    # DB & Files
     DB_PASS=$(openssl rand -base64 14)
     mysql -u root -e "CREATE DATABASE IF NOT EXISTS panel; CREATE USER IF NOT EXISTS 'pterodactyl'@'127.0.0.1' IDENTIFIED BY '$DB_PASS'; GRANT ALL PRIVILEGES ON panel.* TO 'pterodactyl'@'127.0.0.1'; FLUSH PRIVILEGES;"
     
@@ -78,76 +77,98 @@ install_panel() {
     php artisan migrate --seed --force
     php artisan p:user:make --email="$ADMIN_EMAIL" --username="admin" --first_name="Ashmel" --last_name="User" --password="$ADMIN_PASS" --admin=1
     chown -R www-data:www-data /var/www/pterodactyl/*
-    
-    animate_text "Panel Installed!" "$GREEN"
-    sleep 2
+
+    animate_text "Creating Nginx Config..." "$CYAN"
+    cat <<EOF > /etc/nginx/sites-available/pterodactyl.conf
+server {
+    listen 80;
+    server_name $FQDN;
+    root /var/www/pterodactyl/public;
+    index index.php;
+    location / { try_files \$uri \$uri/ /index.php?\$query_string; }
+    location ~ \.php$ {
+        fastcgi_split_path_info ^(.+\.php)(/.+)$;
+        fastcgi_pass unix:/run/php/php8.2-fpm.sock;
+        fastcgi_index index.php;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+    }
+}
+EOF
+    ln -s /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/sites-enabled/pterodactyl.conf
+    systemctl restart nginx
+    animate_text "Panel Ready at http://$FQDN" "$GREEN"; sleep 2
 }
 
-install_blueprint_nebula() {
-    if [ ! -d "/var/www/pterodactyl" ]; then
-        echo -e "${RED}Error: Install Pterodactyl first!${NC}"
-        sleep 2
-        return
-    fi
-
-    show_logo
-    animate_text "Installing Node.js & Dependencies..." "$MAGENTA"
-    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-    apt install -y nodejs
-
-    cd /var/www/pterodactyl
-    
-    # 1. Install Blueprint Framework
-    animate_text "Fetching Blueprint Framework..." "$CYAN"
-    curl -L https://github.com/BlueprintFramework/framework/releases/latest/download/release.zip -o release.zip
-    unzip -o release.zip
-    rm release.zip
-    bash blueprint.sh # Initial init
-
-    # 2. Download Nebula Theme via Command
-    # Note: Replace the URL below with your specific Nebula download link if you have a private one.
-    animate_text "Downloading Nebula Theme via URL..." "$YELLOW"
-    curl -L -o nebula.blueprint https://github.com/PR0XY-S3RVICES/Nebula/releases/latest/download/nebula.blueprint
-    
-    # 3. Automatic Installation
-    animate_text "Executing Nebula Installation..." "$GREEN"
-    php blueprint.sh install nebula
-
-    chown -R www-data:www-data /var/www/pterodactyl/*
-    animate_text "Nebula Theme Installed Successfully!" "$GREEN"
-    sleep 3
+install_wings() {
+    animate_text "Installing Docker and Wings..." "$YELLOW"
+    curl -sSL https://get.docker.com/ | CHANNEL=stable bash
+    systemctl enable --now docker
+    curl -L -o /usr/local/bin/wings "https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_amd64"
+    chmod u+x /usr/local/bin/wings
+    animate_text "Wings Installed." "$GREEN"; sleep 2
 }
 
-# --- Menu Loop ---
+# --- Extensions Sub-Menu ---
+extension_menu() {
+    while true; do
+        show_logo
+        echo -e "  ${MAGENTA}[ EXTENSIONS & THEMES ]${NC}"
+        echo -e "  [1] Install Blueprint Framework (Required for themes)"
+        echo -e "  [2] Install Nebula Theme (Requires Blueprint)"
+        echo -e "  [3] Back to Main Menu"
+        echo -e "${CYAN}-----------------------------------------------------${NC}"
+        echo -ne "${BLUE}Select Action: ${NC}"
+        read EXOPT
+
+        case $EXOPT in
+            1)
+                animate_text "Installing Node.js & Blueprint..." "$YELLOW"
+                curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+                apt install -y nodejs
+                cd /var/www/pterodactyl
+                curl -L https://github.com/BlueprintFramework/framework/releases/latest/download/release.zip -o release.zip
+                unzip -o release.zip && rm release.zip
+                bash blueprint.sh
+                animate_text "Blueprint Framework Installed!" "$GREEN"; sleep 2
+                ;;
+            2)
+                if [ ! -f "/var/www/pterodactyl/blueprint.sh" ]; then
+                    echo -e "${RED}Error: Install Blueprint (Option 1) first!${NC}"; sleep 2
+                else
+                    animate_text "Downloading Nebula Theme..." "$CYAN"
+                    cd /var/www/pterodactyl
+                    curl -L -o nebula.blueprint https://github.com/prplwtf/Nebula/releases/latest/download/nebula.blueprint
+                    php blueprint.sh install nebula
+                    chown -R www-data:www-data /var/www/pterodactyl/*
+                    animate_text "Nebula Theme Installed!" "$GREEN"; sleep 2
+                fi
+                ;;
+            3) break ;;
+            *) echo "Invalid Option"; sleep 1 ;;
+        esac
+    done
+}
+
+# --- Main Loop ---
 while true; do
     show_logo
     echo -e "  [1] ${CYAN}Install Pterodactyl Panel${NC}"
     echo -e "  [2] ${CYAN}Install Wings${NC}"
     echo -e "  [3] ${CYAN}Full Setup (Panel + Wings)${NC}"
-    echo -e "  [4] ${MAGENTA}Install Blueprint + Nebula Theme (Command)${NC}"
-    echo -e "  [5] ${RED}Uninstall Everything${NC}"
-    echo -e "  [6] ${YELLOW}Exit${NC}"
+    echo -e "  [4] ${MAGENTA}Extensions (Blueprint & Nebula)${NC}"
+    echo -e "  [5] ${RED}Uninstall Panel & Wings${NC}"
+    echo -e "  [6] ${YELLOW}Exit Installer${NC}"
     echo -e "${CYAN}-----------------------------------------------------${NC}"
-    echo -ne "${BLUE}Select Option: ${NC}"
+    echo -ne "${BLUE}Action (1-6): ${NC}"
     read OPT
-
     case $OPT in
         1) install_panel ;;
-        2) 
-            curl -sSL https://get.docker.com/ | CHANNEL=stable bash
-            systemctl enable --now docker
-            curl -L -o /usr/local/bin/wings "https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_amd64"
-            chmod u+x /usr/local/bin/wings
-            animate_text "Wings Installed." "$GREEN"
-            sleep 2
-            ;;
+        2) install_wings ;;
         3) install_panel; install_wings ;;
-        4) install_blueprint_nebula ;;
-        5) 
-            rm -rf /var/www/pterodactyl
-            mysql -u root -e "DROP DATABASE IF EXISTS panel;"
-            animate_text "Wiped." "$RED"; sleep 2 ;;
+        4) extension_menu ;;
+        5) rm -rf /var/www/pterodactyl; mysql -u root -e "DROP DATABASE IF EXISTS panel;"; animate_text "Wiped." "$RED"; sleep 2 ;;
         6) exit 0 ;;
-        *) echo "Invalid Selection"; sleep 1 ;;
+        *) echo -e "${RED}Invalid Choice${NC}"; sleep 1 ;;
     esac
 done
