@@ -11,7 +11,7 @@ NC='\033[0m' # No Color
 
 # --- Root Check ---
 if [[ $EUID -ne 0 ]]; then
-   echo -e "${RED}Error: This script must be run as root.${NC}"
+   echo -e "${RED}Error: This script must be run as root (sudo).${NC}"
    exit 1
 fi
 
@@ -42,7 +42,7 @@ show_logo() {
     echo " ███████ ███████ ███████ ██ ████ ██ █████   ██      "
     echo " ██   ██      ██ ██   ██ ██  ██  ██ ██      ██      "
     echo " ██   ██ ███████ ██   ██ ██      ██ ███████ ███████ "
-    echo -e "${BLUE}          ASHMEL VPS PANEL INSTALLER v6.0${NC}"
+    echo -e "${BLUE}          ASHMEL PANEL INSTALLER v7.0${NC}"
     echo -e "${CYAN}-----------------------------------------------------${NC}"
 }
 
@@ -55,11 +55,13 @@ install_panel() {
     read -s -p "Admin Password: " ADMIN_PASS
     echo -e "\n"
 
-    animate_text "Installing LEMP Stack..." "$YELLOW"
+    animate_text "Installing LEMP Stack (No Redis)..." "$YELLOW"
     apt update -y && apt install -y software-properties-common curl ca-certificates gnupg2 sudo unzip tar git
     LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php
     apt update -y
-    apt install -y php8.2 php8.2-{common,cli,gd,mysql,mbstring,bcmath,xml,fpm,curl,zip} nginx mariadb-server redis-server
+    # Note: No redis-server installed here
+    apt install -y php8.2 php8.2-{common,cli,gd,mysql,mbstring,bcmath,xml,fpm,curl,zip} nginx mariadb-server
+    
     curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
 
     DB_PASS=$(openssl rand -base64 14)
@@ -72,12 +74,15 @@ install_panel() {
     cp .env.example .env
     composer install --no-dev --optimize-autoloader
     php artisan key:generate --force
-    php artisan p:environment:setup --author="$ADMIN_EMAIL" --url="https://$FQDN" --timezone="UTC" --cache="redis" --session="redis" --queue="redis" --redis-host="127.0.0.1"
+    
+    # Environment Setup (Cache set to 'file' or 'database' instead of 'redis')
+    php artisan p:environment:setup --author="$ADMIN_EMAIL" --url="https://$FQDN" --timezone="UTC" --cache="file" --session="database" --queue="database"
     php artisan p:environment:database --host="127.0.0.1" --port="3306" --database="panel" --username="pterodactyl" --password="$DB_PASS"
     php artisan migrate --seed --force
     php artisan p:user:make --email="$ADMIN_EMAIL" --username="admin" --first_name="Ashmel" --last_name="User" --password="$ADMIN_PASS" --admin=1
     chown -R www-data:www-data /var/www/pterodactyl/*
 
+    # Nginx Config
     cat <<EOF > /etc/nginx/sites-available/pterodactyl.conf
 server {
     listen 80;
@@ -96,7 +101,7 @@ server {
 EOF
     ln -s /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/sites-enabled/pterodactyl.conf
     systemctl restart nginx
-    animate_text "Panel Installed Successfully!" "$GREEN"; sleep 2
+    animate_text "Panel Installed Successfully (Redis Omitted)!" "$GREEN"; sleep 2
 }
 
 # --- Wings Installation ---
@@ -122,7 +127,7 @@ extension_menu() {
         read EXOPT
         case $EXOPT in
             1)
-                animate_text "Installing Blueprint..." "$YELLOW"
+                animate_text "Installing Node.js & Blueprint..." "$YELLOW"
                 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
                 apt install -y nodejs
                 cd /var/www/pterodactyl
@@ -134,7 +139,7 @@ extension_menu() {
                 if [ ! -f "/var/www/pterodactyl/blueprint.sh" ]; then
                     echo -e "${RED}Error: Install Blueprint first!${NC}"; sleep 2
                 else
-                    animate_text "Installing Nebula..." "$CYAN"
+                    animate_text "Installing Nebula Theme..." "$CYAN"
                     cd /var/www/pterodactyl
                     curl -L -o nebula.blueprint https://github.com/prplwtf/Nebula/releases/latest/download/nebula.blueprint
                     php blueprint.sh install nebula
@@ -169,12 +174,11 @@ delete_panel() {
 
 delete_wings() {
     show_logo
-    echo -e "${RED}!! WARNING: DELETING WINGS AND DOCKER CONTAINERS !!${NC}"
+    echo -e "${RED}!! WARNING: DELETING WINGS AND DOCKER CONFIGS !!${NC}"
     read -p "Type 'DELETE' to confirm: " CONFIRM
     if [[ "$CONFIRM" == "DELETE" ]]; then
-        animate_text "Stopping Wings and Docker..." "$RED"
-        systemctl stop wings
-        systemctl stop docker
+        animate_text "Stopping Wings and Removing Files..." "$RED"
+        systemctl stop wings 2>/dev/null
         rm -rf /etc/pterodactyl
         rm -f /usr/local/bin/wings
         rm -f /etc/systemd/system/wings.service
@@ -206,7 +210,7 @@ while true; do
         4) extension_menu ;;
         5) delete_panel ;;
         6) delete_wings ;;
-        7) exit 0 ;;
+        7) animate_text "Exiting..." "$YELLOW"; exit 0 ;;
         *) echo -e "${RED}Invalid Selection${NC}"; sleep 1 ;;
     esac
 done
