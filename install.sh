@@ -1,10 +1,6 @@
 ```bash
 #!/bin/bash
 
-# =========================
-# ASHMEL PREMIUM PANEL INSTALLER
-# =========================
-
 clear
 
 # Colors
@@ -15,8 +11,8 @@ BLUE='\033[1;34m'
 CYAN='\033[1;36m'
 NC='\033[0m'
 
-# Animated Logo
 logo() {
+
 echo -e "${CYAN}"
 sleep 0.05
 echo " █████╗ ███████╗██╗  ██╗███╗   ███╗███████╗██╗     "
@@ -33,19 +29,20 @@ echo "╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝ 
 echo ""
 echo -e "${GREEN}      ASHMEL PTERODACTYL INSTALLER${NC}"
 echo ""
+
 }
 
-# Loading animation
 loading() {
-echo -ne "${YELLOW}Loading"
+
+echo -ne "${YELLOW}Preparing"
 for i in {1..5}; do
 echo -ne "."
 sleep 0.3
 done
 echo -e "${NC}"
+
 }
 
-# Install Panel
 install_panel() {
 
 loading
@@ -105,7 +102,6 @@ read -p "Press enter to continue"
 
 }
 
-# Install Wings
 install_wings() {
 
 loading
@@ -118,13 +114,11 @@ read -p "Press enter to continue"
 
 }
 
-# Remove Panel
 remove_panel() {
 
 echo -e "${RED}Removing Panel...${NC}"
 
 rm -rf /var/www/pterodactyl
-
 apt remove nginx mariadb-server redis-server php8.2* -y
 
 echo -e "${GREEN}Panel Removed${NC}"
@@ -133,7 +127,6 @@ read -p "Press enter to continue"
 
 }
 
-# Remove Wings
 remove_wings() {
 
 echo -e "${RED}Removing Wings...${NC}"
@@ -148,17 +141,16 @@ read -p "Press enter to continue"
 
 }
 
-# Menu
 menu() {
 
-echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN}1)${NC} Install Panel"
 echo -e "${GREEN}2)${NC} Install Wings"
 echo -e "${GREEN}3)${NC} Install Panel + Wings"
 echo -e "${RED}4)${NC} Remove Panel"
 echo -e "${RED}5)${NC} Remove Wings"
 echo -e "${CYAN}6)${NC} Exit"
-echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
 read -p "Select option: " choice
 
@@ -174,7 +166,6 @@ esac
 
 }
 
-# Main loop
 while true
 do
 clear
