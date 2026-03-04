@@ -15,7 +15,7 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-# --- Animation UI ---
+# --- UI Functions ---
 animate_text() {
     local text="$1"
     local color="$2"
@@ -42,11 +42,11 @@ show_logo() {
     echo " ███████ ███████ ███████ ██ ████ ██ █████   ██      "
     echo " ██   ██      ██ ██   ██ ██  ██  ██ ██      ██      "
     echo " ██   ██ ███████ ██   ██ ██      ██ ███████ ███████ "
-    echo -e "${BLUE}          ASHMEL VPS PANEL INSTALLER v5.0${NC}"
+    echo -e "${BLUE}          ASHMEL VPS PANEL INSTALLER v6.0${NC}"
     echo -e "${CYAN}-----------------------------------------------------${NC}"
 }
 
-# --- Panel & Wings Logic ---
+# --- Panel Installation ---
 install_panel() {
     show_logo
     echo -e "${CYAN}[ PANEL INSTALLATION ]${NC}"
@@ -55,7 +55,7 @@ install_panel() {
     read -s -p "Admin Password: " ADMIN_PASS
     echo -e "\n"
 
-    animate_text "Installing LEMP Stack (PHP 8.2, MariaDB, Nginx)..." "$YELLOW"
+    animate_text "Installing LEMP Stack..." "$YELLOW"
     apt update -y && apt install -y software-properties-common curl ca-certificates gnupg2 sudo unzip tar git
     LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php
     apt update -y
@@ -78,7 +78,6 @@ install_panel() {
     php artisan p:user:make --email="$ADMIN_EMAIL" --username="admin" --first_name="Ashmel" --last_name="User" --password="$ADMIN_PASS" --admin=1
     chown -R www-data:www-data /var/www/pterodactyl/*
 
-    animate_text "Creating Nginx Config..." "$CYAN"
     cat <<EOF > /etc/nginx/sites-available/pterodactyl.conf
 server {
     listen 80;
@@ -97,9 +96,10 @@ server {
 EOF
     ln -s /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/sites-enabled/pterodactyl.conf
     systemctl restart nginx
-    animate_text "Panel Ready at http://$FQDN" "$GREEN"; sleep 2
+    animate_text "Panel Installed Successfully!" "$GREEN"; sleep 2
 }
 
+# --- Wings Installation ---
 install_wings() {
     animate_text "Installing Docker and Wings..." "$YELLOW"
     curl -sSL https://get.docker.com/ | CHANNEL=stable bash
@@ -109,66 +109,104 @@ install_wings() {
     animate_text "Wings Installed." "$GREEN"; sleep 2
 }
 
-# --- Extensions Sub-Menu ---
+# --- Extension Sub-Menu ---
 extension_menu() {
     while true; do
         show_logo
-        echo -e "  ${MAGENTA}[ EXTENSIONS & THEMES ]${NC}"
-        echo -e "  [1] Install Blueprint Framework (Required for themes)"
-        echo -e "  [2] Install Nebula Theme (Requires Blueprint)"
+        echo -e "  ${MAGENTA}[ EXTENSIONS MENU ]${NC}"
+        echo -e "  [1] Install Blueprint Framework"
+        echo -e "  [2] Install Nebula Theme"
         echo -e "  [3] Back to Main Menu"
         echo -e "${CYAN}-----------------------------------------------------${NC}"
-        echo -ne "${BLUE}Select Action: ${NC}"
+        echo -ne "${BLUE}Select Option: ${NC}"
         read EXOPT
-
         case $EXOPT in
             1)
-                animate_text "Installing Node.js & Blueprint..." "$YELLOW"
+                animate_text "Installing Blueprint..." "$YELLOW"
                 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
                 apt install -y nodejs
                 cd /var/www/pterodactyl
                 curl -L https://github.com/BlueprintFramework/framework/releases/latest/download/release.zip -o release.zip
                 unzip -o release.zip && rm release.zip
                 bash blueprint.sh
-                animate_text "Blueprint Framework Installed!" "$GREEN"; sleep 2
-                ;;
+                animate_text "Blueprint Ready." "$GREEN"; sleep 2 ;;
             2)
                 if [ ! -f "/var/www/pterodactyl/blueprint.sh" ]; then
-                    echo -e "${RED}Error: Install Blueprint (Option 1) first!${NC}"; sleep 2
+                    echo -e "${RED}Error: Install Blueprint first!${NC}"; sleep 2
                 else
-                    animate_text "Downloading Nebula Theme..." "$CYAN"
+                    animate_text "Installing Nebula..." "$CYAN"
                     cd /var/www/pterodactyl
                     curl -L -o nebula.blueprint https://github.com/prplwtf/Nebula/releases/latest/download/nebula.blueprint
                     php blueprint.sh install nebula
                     chown -R www-data:www-data /var/www/pterodactyl/*
                     animate_text "Nebula Theme Installed!" "$GREEN"; sleep 2
-                fi
-                ;;
+                fi ;;
             3) break ;;
-            *) echo "Invalid Option"; sleep 1 ;;
         esac
     done
 }
 
-# --- Main Loop ---
+# --- Deep Clean Delete Functions ---
+delete_panel() {
+    show_logo
+    echo -e "${RED}!! WARNING: DELETING PANEL WEB FILES AND DATABASE !!${NC}"
+    read -p "Type 'DELETE' to confirm: " CONFIRM
+    if [[ "$CONFIRM" == "DELETE" ]]; then
+        animate_text "Removing Panel files and Nginx configs..." "$RED"
+        rm -rf /var/www/pterodactyl
+        rm -f /etc/nginx/sites-available/pterodactyl.conf
+        rm -f /etc/nginx/sites-enabled/pterodactyl.conf
+        systemctl restart nginx
+        animate_text "Wiping Database..." "$RED"
+        mysql -u root -e "DROP DATABASE IF EXISTS panel;"
+        mysql -u root -e "DROP USER IF EXISTS 'pterodactyl'@'127.0.0.1';"
+        animate_text "Panel has been fully deleted." "$GREEN"
+    else
+        echo "Aborted."
+    fi
+    sleep 2
+}
+
+delete_wings() {
+    show_logo
+    echo -e "${RED}!! WARNING: DELETING WINGS AND DOCKER CONTAINERS !!${NC}"
+    read -p "Type 'DELETE' to confirm: " CONFIRM
+    if [[ "$CONFIRM" == "DELETE" ]]; then
+        animate_text "Stopping Wings and Docker..." "$RED"
+        systemctl stop wings
+        systemctl stop docker
+        rm -rf /etc/pterodactyl
+        rm -f /usr/local/bin/wings
+        rm -f /etc/systemd/system/wings.service
+        systemctl daemon-reload
+        animate_text "Wings has been fully deleted." "$GREEN"
+    else
+        echo "Aborted."
+    fi
+    sleep 2
+}
+
+# --- Main Menu Loop ---
 while true; do
     show_logo
     echo -e "  [1] ${CYAN}Install Pterodactyl Panel${NC}"
     echo -e "  [2] ${CYAN}Install Wings${NC}"
     echo -e "  [3] ${CYAN}Full Setup (Panel + Wings)${NC}"
     echo -e "  [4] ${MAGENTA}Extensions (Blueprint & Nebula)${NC}"
-    echo -e "  [5] ${RED}Uninstall Panel & Wings${NC}"
-    echo -e "  [6] ${YELLOW}Exit Installer${NC}"
+    echo -e "  [5] ${RED}Delete Panel (Deep Clean)${NC}"
+    echo -e "  [6] ${RED}Delete Wings (Deep Clean)${NC}"
+    echo -e "  [7] ${YELLOW}Exit Installer${NC}"
     echo -e "${CYAN}-----------------------------------------------------${NC}"
-    echo -ne "${BLUE}Action (1-6): ${NC}"
+    echo -ne "${BLUE}Select Action: ${NC}"
     read OPT
     case $OPT in
         1) install_panel ;;
         2) install_wings ;;
         3) install_panel; install_wings ;;
         4) extension_menu ;;
-        5) rm -rf /var/www/pterodactyl; mysql -u root -e "DROP DATABASE IF EXISTS panel;"; animate_text "Wiped." "$RED"; sleep 2 ;;
-        6) exit 0 ;;
-        *) echo -e "${RED}Invalid Choice${NC}"; sleep 1 ;;
+        5) delete_panel ;;
+        6) delete_wings ;;
+        7) exit 0 ;;
+        *) echo -e "${RED}Invalid Selection${NC}"; sleep 1 ;;
     esac
 done
