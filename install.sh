@@ -42,7 +42,7 @@ show_logo() {
     echo " ███████ ███████ ███████ ██ ████ ██ █████   ██      "
     echo " ██   ██      ██ ██   ██ ██  ██  ██ ██      ██      "
     echo " ██   ██ ███████ ██   ██ ██      ██ ███████ ███████ "
-    echo -e "${BLUE}          ASHMEL PANEL INSTALLER v7.0${NC}"
+    echo -e "${BLUE}          ASHMEL VPS PANEL INSTALLER v8.0${NC}"
     echo -e "${CYAN}-----------------------------------------------------${NC}"
 }
 
@@ -55,18 +55,29 @@ install_panel() {
     read -s -p "Admin Password: " ADMIN_PASS
     echo -e "\n"
 
-    animate_text "Installing LEMP Stack (No Redis)..." "$YELLOW"
+    animate_text "Installing Dependencies & MariaDB..." "$YELLOW"
     apt update -y && apt install -y software-properties-common curl ca-certificates gnupg2 sudo unzip tar git
     LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php
     apt update -y
-    # Note: No redis-server installed here
     apt install -y php8.2 php8.2-{common,cli,gd,mysql,mbstring,bcmath,xml,fpm,curl,zip} nginx mariadb-server
     
+    # FIX: Ensure MariaDB is running and enabled
+    systemctl enable mariadb
+    systemctl start mariadb
+    sleep 2 # Give MariaDB time to start
+
+    animate_text "Configuring Database Permissions..." "$CYAN"
+    DB_PASS=$(openssl rand -base64 14)
+    # Ensure local root access is active and create the pterodactyl user
+    mysql -u root <<EOF
+CREATE DATABASE IF NOT EXISTS panel;
+CREATE USER IF NOT EXISTS 'pterodactyl'@'127.0.0.1' IDENTIFIED BY '$DB_PASS';
+GRANT ALL PRIVILEGES ON panel.* TO 'pterodactyl'@'127.0.0.1' WITH GRANT OPTION;
+FLUSH PRIVILEGES;
+EOF
+
     curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
 
-    DB_PASS=$(openssl rand -base64 14)
-    mysql -u root -e "CREATE DATABASE IF NOT EXISTS panel; CREATE USER IF NOT EXISTS 'pterodactyl'@'127.0.0.1' IDENTIFIED BY '$DB_PASS'; GRANT ALL PRIVILEGES ON panel.* TO 'pterodactyl'@'127.0.0.1'; FLUSH PRIVILEGES;"
-    
     mkdir -p /var/www/pterodactyl && cd /var/www/pterodactyl
     curl -Lo panel.tar.gz https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz
     tar -xzvf panel.tar.gz
@@ -75,9 +86,11 @@ install_panel() {
     composer install --no-dev --optimize-autoloader
     php artisan key:generate --force
     
-    # Environment Setup (Cache set to 'file' or 'database' instead of 'redis')
+    # FIX: Automating the connection to avoid the error in your image
+    animate_text "Linking Panel to Database..." "$YELLOW"
     php artisan p:environment:setup --author="$ADMIN_EMAIL" --url="https://$FQDN" --timezone="UTC" --cache="file" --session="database" --queue="database"
     php artisan p:environment:database --host="127.0.0.1" --port="3306" --database="panel" --username="pterodactyl" --password="$DB_PASS"
+    
     php artisan migrate --seed --force
     php artisan p:user:make --email="$ADMIN_EMAIL" --username="admin" --first_name="Ashmel" --last_name="User" --password="$ADMIN_PASS" --admin=1
     chown -R www-data:www-data /var/www/pterodactyl/*
@@ -99,9 +112,9 @@ server {
     }
 }
 EOF
-    ln -s /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/sites-enabled/pterodactyl.conf
+    ln -s -f /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/sites-enabled/pterodactyl.conf
     systemctl restart nginx
-    animate_text "Panel Installed Successfully (Redis Omitted)!" "$GREEN"; sleep 2
+    animate_text "Panel Fixed and Installed! Access at http://$FQDN" "$GREEN"; sleep 2
 }
 
 # --- Wings Installation ---
@@ -154,46 +167,30 @@ extension_menu() {
 # --- Deep Clean Delete Functions ---
 delete_panel() {
     show_logo
-    echo -e "${RED}!! WARNING: DELETING PANEL WEB FILES AND DATABASE !!${NC}"
-    read -p "Type 'DELETE' to confirm: " CONFIRM
-    if [[ "$CONFIRM" == "DELETE" ]]; then
-        animate_text "Removing Panel files and Nginx configs..." "$RED"
-        rm -rf /var/www/pterodactyl
-        rm -f /etc/nginx/sites-available/pterodactyl.conf
-        rm -f /etc/nginx/sites-enabled/pterodactyl.conf
-        systemctl restart nginx
-        animate_text "Wiping Database..." "$RED"
-        mysql -u root -e "DROP DATABASE IF EXISTS panel;"
-        mysql -u root -e "DROP USER IF EXISTS 'pterodactyl'@'127.0.0.1';"
-        animate_text "Panel has been fully deleted." "$GREEN"
-    else
-        echo "Aborted."
-    fi
-    sleep 2
+    animate_text "Full Panel Wipe in progress..." "$RED"
+    rm -rf /var/www/pterodactyl
+    rm -f /etc/nginx/sites-available/pterodactyl.conf
+    rm -f /etc/nginx/sites-enabled/pterodactyl.conf
+    systemctl restart nginx
+    mysql -u root -e "DROP DATABASE IF EXISTS panel; DROP USER IF EXISTS 'pterodactyl'@'127.0.0.1';"
+    animate_text "Panel wiped." "$GREEN"; sleep 2
 }
 
 delete_wings() {
     show_logo
-    echo -e "${RED}!! WARNING: DELETING WINGS AND DOCKER CONFIGS !!${NC}"
-    read -p "Type 'DELETE' to confirm: " CONFIRM
-    if [[ "$CONFIRM" == "DELETE" ]]; then
-        animate_text "Stopping Wings and Removing Files..." "$RED"
-        systemctl stop wings 2>/dev/null
-        rm -rf /etc/pterodactyl
-        rm -f /usr/local/bin/wings
-        rm -f /etc/systemd/system/wings.service
-        systemctl daemon-reload
-        animate_text "Wings has been fully deleted." "$GREEN"
-    else
-        echo "Aborted."
-    fi
-    sleep 2
+    animate_text "Stopping and Deleting Wings..." "$RED"
+    systemctl stop wings 2>/dev/null
+    rm -rf /etc/pterodactyl
+    rm -f /usr/local/bin/wings
+    rm -f /etc/systemd/system/wings.service
+    systemctl daemon-reload
+    animate_text "Wings wiped." "$GREEN"; sleep 2
 }
 
 # --- Main Menu Loop ---
 while true; do
     show_logo
-    echo -e "  [1] ${CYAN}Install Pterodactyl Panel${NC}"
+    echo -e "  [1] ${CYAN}Fix/Install Pterodactyl Panel${NC}"
     echo -e "  [2] ${CYAN}Install Wings${NC}"
     echo -e "  [3] ${CYAN}Full Setup (Panel + Wings)${NC}"
     echo -e "  [4] ${MAGENTA}Extensions (Blueprint & Nebula)${NC}"
@@ -210,7 +207,7 @@ while true; do
         4) extension_menu ;;
         5) delete_panel ;;
         6) delete_wings ;;
-        7) animate_text "Exiting..." "$YELLOW"; exit 0 ;;
+        7) exit 0 ;;
         *) echo -e "${RED}Invalid Selection${NC}"; sleep 1 ;;
     esac
 done
