@@ -1,244 +1,188 @@
-```bash
 #!/bin/bash
 
-RED='\033[1;31m'
-GREEN='\033[1;32m'
-BLUE='\033[1;34m'
-CYAN='\033[1;36m'
-YELLOW='\033[1;33m'
-MAGENTA='\033[1;35m'
+# --- ICONIC PANEL INSTALLER ---
+# OS Support: Ubuntu 22.04+, Debian 11+
+# Features: Animated Intro, Spinner, Interactive Menu
+
+# --- Color Palette ---
+R='\033[0;31m'
+G='\033[0;32m'
+Y='\033[1;33m'
+B='\033[0;34m'
+P='\033[0;35m'
+C='\033[0;36m'
+W='\033[1;37m'
 NC='\033[0m'
 
-if [[ $EUID -ne 0 ]]; then
-echo -e "${RED}Please run as root${NC}"
-exit
+# --- Initialization ---
+set -e
+if [ "$EUID" -ne 0 ]; then 
+  echo -e "${R}Error: This script must be run as root.${NC}"
+  exit 1
 fi
 
-spinner() {
-pid=$!
-spin='-\|/'
-i=0
-while kill -0 $pid 2>/dev/null; do
-i=$(( (i+1) %4 ))
-printf "\r${CYAN}[%c] Processing...${NC}" "${spin:$i:1}"
-sleep .1
-done
-printf "\r"
+# --- Animation: Intro ---
+animate_intro() {
+    clear
+    local logo=(
+        "  _____ _____  ____  _   _ _____ _____ "
+        " |_   _/ ____|/ __ \| \ | |_   _/ ____|"
+        "   | || |    | |  | |  \| | | || |     "
+        "   | || |    | |  | | . ' | | || |     "
+        "  _| || |____| |__| | |\  |_| || |____ "
+        " |_____\_____|\____/|_| \_|_____\_____|"
+    )
+    for line in "${logo[@]}"; do
+        echo -e "${C}${line}${NC}"
+        sleep 0.1
+    done
+    echo -e "\n          ${W}PREMIUM AUTOMATED INSTALLER${NC}"
+    echo -e "      ${G}Checking system compatibility...${NC}\n"
+    sleep 1
 }
 
-logo(){
-clear
-echo -e "${CYAN}"
-echo " █████╗ ███████╗██╗  ██╗███╗   ███╗███████╗██╗     "
-echo "██╔══██╗██╔════╝██║  ██║████╗ ████║██╔════╝██║     "
-echo "███████║███████╗███████║██╔████╔██║█████╗  ██║     "
-echo "██╔══██║╚════██║██╔══██║██║╚██╔╝██║██╔══╝  ██║     "
-echo "██║  ██║███████║██║  ██║██║ ╚═╝ ██║███████╗███████╗"
-echo ""
-echo -e "${MAGENTA}ASHMEL VPS PANEL INSTALLER v2${NC}"
-echo -e "${CYAN}-----------------------------------------${NC}"
+# --- UI Helper: Spinner ---
+show_spinner() {
+    local pid=$!
+    local delay=0.1
+    local spinstr='|/-\'
+    while [ "$(ps a | awk '{print $1}' | grep $pid)" ]; do
+        local temp=${spinstr#?}
+        printf " ${C}[%c]${NC}  " "$spinstr"
+        local spinstr=$temp${spinstr%"$temp"}
+        sleep $delay
+        printf "\b\b\b\b\b\b"
+    done
+    printf "    \b\b\b\b"
 }
 
-install_panel(){
+# --- Functions: Installation ---
 
-logo
-echo -e "${YELLOW}Starting Panel Installation...${NC}"
+install_panel() {
+    echo -e "${B}[1/4] Updating repositories...${NC}"
+    apt update -y &> /dev/null & show_spinner
+    
+    echo -e "${B}[2/4] Installing PHP 8.2 & Dependencies...${NC}"
+    # Repository logic
+    if [[ $(lsb_release -si) == "Ubuntu" ]]; then
+        add-apt-repository -y ppa:ondrej/php &> /dev/null
+    else
+        curl -sSLo /usr/share/keyrings/deb.sury.org-php.gpg https://packages.sury.org/php/apt.gpg
+        echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ $(lsb_release -sc) main" > /etc/apt/sources.list.d/php.list
+    fi
+    apt update -y &> /dev/null
+    apt install -y php8.2 php8.2-{cli,fpm,mysql,gd,curl,mbstring,bcmath,xml,zip} nginx mariadb-server redis-server curl git unzip tar software-properties-common &> /dev/null & show_spinner
 
-read -p "Panel Domain: " FQDN
-read -p "Admin Email: " EMAIL
-read -s -p "Admin Password: " PASS
-echo ""
+    echo -e "${B}[3/4] Setting up Database...${NC}"
+    DB_PASS=$(openssl rand -base64 12)
+    mysql -u root -e "CREATE DATABASE IF NOT EXISTS panel; CREATE USER IF NOT EXISTS 'pterodactyl'@'127.0.0.1' IDENTIFIED BY '$DB_PASS'; GRANT ALL PRIVILEGES ON panel.* TO 'pterodactyl'@'127.0.0.1'; FLUSH PRIVILEGES;"
 
-(
-apt update -y
-apt install -y curl tar unzip git redis-server nginx mariadb-server software-properties-common ca-certificates gnupg
-) & spinner
+    echo -e "${B}[4/4] Downloading & Configuring Panel...${NC}"
+    mkdir -p /var/www/pterodactyl && cd /var/www/pterodactyl
+    curl -Lo panel.tar.gz https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz &> /dev/null
+    tar -xzvf panel.tar.gz &> /dev/null
+    chmod -R 755 storage/* bootstrap/cache/
+    curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer &> /dev/null
+    cp .env.example .env
+    composer install --no-dev --optimize-autoloader &> /dev/null & show_spinner
+    
+    php artisan key:generate --force
+    php artisan p:environment:setup --author="admin@example.com" --url="http://$(curl -s ifconfig.me)" --timezone="UTC" --cache="redis" --session="redis" --queue="redis" --redis-host="127.0.0.1"
+    sed -i "s/DB_PASSWORD=/DB_PASSWORD=$DB_PASS/" .env
+    php artisan migrate --seed --force
 
-(
-add-apt-repository -y ppa:ondrej/php
-apt update -y
-apt install -y php8.2 php8.2-cli php8.2-common php8.2-gd php8.2-mysql php8.2-mbstring php8.2-bcmath php8.2-xml php8.2-fpm php8.2-curl php8.2-zip
-) & spinner
-
-systemctl enable --now mariadb
-systemctl enable --now redis-server
-
-DBPASS=$(openssl rand -base64 12)
-
-mysql <<EOF
-CREATE DATABASE IF NOT EXISTS panel;
-CREATE USER IF NOT EXISTS 'pterodactyl'@'127.0.0.1' IDENTIFIED BY '$DBPASS';
-GRANT ALL PRIVILEGES ON panel.* TO 'pterodactyl'@'127.0.0.1';
-FLUSH PRIVILEGES;
-EOF
-
-echo -e "${CYAN}Installing Composer...${NC}"
-
-(
-curl -sS https://getcomposer.org/installer -o composer-setup.php
-php composer-setup.php --install-dir=/usr/local/bin --filename=composer
-rm composer-setup.php
-) & spinner
-
-mkdir -p /var/www/pterodactyl
-cd /var/www/pterodactyl
-
-echo -e "${CYAN}Downloading Panel...${NC}"
-
-(
-curl -Lo panel.tar.gz https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz
-tar -xzvf panel.tar.gz
-chmod -R 755 storage/* bootstrap/cache/
-) & spinner
-
-cp .env.example .env
-
-composer install --no-dev --optimize-autoloader
-
-php artisan key:generate --force
-
-php artisan p:environment:setup --author="$EMAIL" --url="https://$FQDN" --timezone="UTC" --cache="file" --session="database" --queue="database"
-
-php artisan p:environment:database --host="127.0.0.1" --port="3306" --database="panel" --username="pterodactyl" --password="$DBPASS"
-
-php artisan migrate --seed --force
-
-php artisan p:user:make --email="$EMAIL" --username="admin" --first_name="Admin" --last_name="User" --password="$PASS" --admin=1
-
-chown -R www-data:www-data /var/www/pterodactyl
-
-cat <<EOF > /etc/nginx/sites-available/pterodactyl.conf
-server {
-listen 80;
-server_name $FQDN;
-root /var/www/pterodactyl/public;
-index index.php;
-
-location / {
-try_files \$uri \$uri/ /index.php?\$query_string;
+    echo -e "${Y}--- ADMIN USER CREATION ---${NC}"
+    php artisan p:user:make
+    chown -R www-data:www-data /var/www/pterodactyl/*
+    echo -e "${G}Panel installed successfully! Database Pass: $DB_PASS${NC}"
+    sleep 3
 }
 
-location ~ \.php$ {
-fastcgi_split_path_info ^(.+\.php)(/.+)$;
-fastcgi_pass unix:/run/php/php8.2-fpm.sock;
-fastcgi_index index.php;
-include fastcgi_params;
-fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
-}
-}
-EOF
-
-ln -sf /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/sites-enabled/pterodactyl.conf
-
-systemctl restart nginx
-systemctl restart php8.2-fpm
-
-echo -e "${GREEN}Panel Installation Complete!${NC}"
-
-}
-
-install_wings(){
-
-logo
-echo -e "${YELLOW}Installing Wings...${NC}"
-
-(
-curl -sSL https://get.docker.com | bash
-systemctl enable --now docker
-) & spinner
-
-mkdir -p /etc/pterodactyl
-
-curl -L -o /usr/local/bin/wings https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_amd64
-
-chmod +x /usr/local/bin/wings
-
-cat <<EOF > /etc/systemd/system/wings.service
+install_wings() {
+    echo -e "${B}Installing Docker & Wings...${NC}"
+    curl -sSL https://get.docker.com/ | CHANNEL=stable sh &> /dev/null & show_spinner
+    systemctl enable --now docker &> /dev/null
+    mkdir -p /etc/pterodactyl
+    curl -L -o /usr/local/bin/wings "https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_amd64" &> /dev/null
+    chmod +x /usr/local/bin/wings
+    
+    # Systemd Service
+    cat <<EOF > /etc/systemd/system/wings.service
 [Unit]
-Description=Pterodactyl Wings
+Description=Pterodactyl Wings Daemon
 After=docker.service
 Requires=docker.service
-
 [Service]
 User=root
 WorkingDirectory=/etc/pterodactyl
+LimitNOFILE=4096
 ExecStart=/usr/local/bin/wings
-Restart=always
-
+Restart=on-failure
+StartLimitInterval=180
+StartLimitBurst=30
+RestartSec=5s
 [Install]
 WantedBy=multi-user.target
 EOF
-
-systemctl daemon-reload
-systemctl enable wings
-systemctl start wings
-
-echo -e "${GREEN}Wings Installed Successfully!${NC}"
-
+    systemctl enable --now wings &> /dev/null
+    echo -e "${G}Wings binary installed and service started.${NC}"
+    sleep 2
 }
 
-delete_panel(){
-
-logo
-echo -e "${RED}Removing Panel...${NC}"
-
-rm -rf /var/www/pterodactyl
-rm -f /etc/nginx/sites-enabled/pterodactyl.conf
-rm -f /etc/nginx/sites-available/pterodactyl.conf
-
-mysql <<EOF
-DROP DATABASE IF EXISTS panel;
-DROP USER IF EXISTS 'pterodactyl'@'127.0.0.1';
-EOF
-
-systemctl restart nginx
-
-echo -e "${GREEN}Panel Deleted${NC}"
-
+install_blueprint() {
+    echo -e "${P}Installing Blueprint Framework...${NC}"
+    cd /var/www/pterodactyl
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - &> /dev/null
+    apt install -y nodejs &> /dev/null
+    npm install -g yarn &> /dev/null
+    curl -sL https://github.com/BlueprintFramework/framework/releases/latest/download/blueprint.sh -o blueprint.sh
+    bash blueprint.sh
+    echo -e "${G}Blueprint installation finished.${NC}"
+    sleep 2
 }
 
-while true
-do
+delete_panel() {
+    echo -e "${R}!!! PERMANENTLY DELETING PANEL !!!${NC}"
+    rm -rf /var/www/pterodactyl
+    mysql -u root -e "DROP DATABASE IF EXISTS panel; DROP USER IF EXISTS 'pterodactyl'@'127.0.0.1';"
+    echo -e "${Y}Panel files and database removed.${NC}"
+    sleep 2
+}
 
-logo
+delete_wings() {
+    systemctl stop wings || true
+    rm -rf /etc/pterodactyl /usr/local/bin/wings /etc/systemd/system/wings.service
+    echo -e "${Y}Wings binary and service removed.${NC}"
+    sleep 2
+}
 
-echo -e "${CYAN}1) Install Panel${NC}"
-echo -e "${CYAN}2) Install Wings${NC}"
-echo -e "${CYAN}3) Full Setup${NC}"
-echo -e "${RED}4) Delete Panel${NC}"
-echo -e "${YELLOW}5) Exit${NC}"
+# --- Main Menu Loop ---
+animate_intro
+while true; do
+    clear
+    echo -e "${C}==========================================${NC}"
+    echo -e "         ${W}ICONIC PANEL INSTALLER${NC}"
+    echo -e "${C}==========================================${NC}"
+    echo -e " ${W}[1]${NC} ${G}Install Pterodactyl Panel${NC}"
+    echo -e " ${W}[2]${NC} ${G}Install Wings${NC}"
+    echo -e " ${W}[3]${NC} ${C}Full Installation (Panel + Wings)${NC}"
+    echo -e " ${W}[4]${NC} ${P}Install Blueprint Extension${NC}"
+    echo -e "------------------------------------------"
+    echo -e " ${W}[5]${NC} ${R}Delete Panel${NC}"
+    echo -e " ${W}[6]${NC} ${R}Delete Wings${NC}"
+    echo -e " ${W}[0]${NC} Exit"
+    echo -e "------------------------------------------"
+    echo -ne "${Y}Choose option: ${NC}"
+    read -r opt
 
-read -p "Select option: " opt
-
-case $opt in
-
-1)
-install_panel
-;;
-
-2)
-install_wings
-;;
-
-3)
-install_panel
-install_wings
-;;
-
-4)
-delete_panel
-;;
-
-5)
-exit
-;;
-
-*)
-echo "Invalid option"
-sleep 1
-;;
-
-esac
-
+    case $opt in
+        1) install_panel ;;
+        2) install_wings ;;
+        3) install_panel; install_wings ;;
+        4) install_blueprint ;;
+        5) delete_panel ;;
+        6) delete_wings ;;
+        0) exit 0 ;;
+        *) echo -e "${R}Invalid option.${NC}"; sleep 1 ;;
+    esac
 done
-```
