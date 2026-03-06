@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ================================================================= #
-#                ICONIC PANEL INSTALLER - TURBO                     #
+#                ICONIC PANEL INSTALLER - FULL TURBO                #
 # ================================================================= #
 
 # --- Color Palette ---
@@ -50,59 +50,77 @@ animate_intro() {
     echo "  ╚═╝ ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝ ╚═════╝"
     echo -e "      ${W}P  A  N  E  L     I  N  S  T  A  L  L  E  R${NC}"
     echo -e "${C}  ===============================================${NC}"
-    echo -e "          ${Y}TURBO INSTALLATION MODE ENABLED${NC}"
+    echo -e "          ${Y}AUTOMATIC PANEL AND WINGS INSTALLER${NC}"
     echo -e "${C}  ===============================================${NC}"
 }
 
-# --- Turbo Installation ---
 install_panel() {
     animate_intro
-    echo -e "${B}>> Fast-tracking Dependencies...${NC}"
     
-    # OS Detection & Repo Setup
+    # --- Interactive Inputs ---
+    echo -e "${W}Please enter the following details:${NC}"
+    read -p "FQDN (e.g. panel.example.com): " FQDN
+    read -p "Admin Email: " ADMIN_EMAIL
+    read -p "Admin Username: " ADMIN_USER
+    read -p "Admin First Name: " ADMIN_FIRST
+    read -p "Admin Last Name: " ADMIN_LAST
+    read -s -p "Admin Password: " ADMIN_PASS
+    echo -e "\n"
+
+    echo -e "${B}>> Fast-tracking Dependencies & Redis...${NC}"
+    
+    # Repo Setup
     OS=$(lsb_release -si)
     if [ "$OS" == "Ubuntu" ]; then
         add-apt-repository -y ppa:ondrej/php &> /dev/null
     else
-        curl -sSLo /usr/share/keyrings/deb.sury.org-php.gpg https://packages.sury.org/php/apt.gpg
+        apt install -y wget &> /dev/null
+        wget -O /usr/share/keyrings/deb.sury.org-php.gpg https://packages.sury.org/php/apt.gpg &> /dev/null
         echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ $(lsb_release -sc) main" > /etc/apt/sources.list.d/php.list
     fi
 
-    # Batch Install (Fastest Method)
+    # Batch Install
     apt-get update -y &> /dev/null
-    apt-get install -y -qq php8.2 php8.2-{cli,fpm,mysql,gd,curl,mbstring,bcmath,xml,zip} nginx mariadb-server redis-server curl git unzip tar software-properties-common &> /dev/null & show_spinner
+    apt-get install -y -qq php8.2 php8.2-{cli,fpm,mysql,gd,curl,mbstring,bcmath,xml,zip} nginx mariadb-server redis-server curl git unzip tar &> /dev/null & show_spinner
 
-    echo -e "${B}>> Building Database & Environment...${NC}"
+    # --- Redis & MariaDB Auto-Config ---
+    systemctl enable --now redis-server
     DB_PASS=$(openssl rand -base64 12)
     mysql -u root -e "CREATE DATABASE IF NOT EXISTS panel; CREATE USER IF NOT EXISTS 'pterodactyl'@'127.0.0.1' IDENTIFIED BY '$DB_PASS'; GRANT ALL PRIVILEGES ON panel.* TO 'pterodactyl'@'127.0.0.1'; FLUSH PRIVILEGES;"
 
-    # Fast Download & Unpack
+    # --- Panel Files ---
     mkdir -p /var/www/pterodactyl && cd /var/www/pterodactyl
     curl -sL https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz | tar -xzv
     chmod -R 755 storage/* bootstrap/cache/
 
-    # Composer Turbo
+    # --- Composer Turbo ---
     curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer &> /dev/null
     cp .env.example .env
     composer install --no-dev --optimize-autoloader --quiet &> /dev/null & show_spinner
     
-    # Auto-filling Environment
+    # --- Environment Auto-Setup ---
     php artisan key:generate --force
-    php artisan p:environment:setup --author="admin@example.com" --url="http://$(curl -s ifconfig.me)" --timezone="UTC" --cache="redis" --session="redis" --queue="redis" --redis-host="127.0.0.1" &> /dev/null
+    php artisan p:environment:setup --author="$ADMIN_EMAIL" --url="https://$FQDN" --timezone="UTC" --cache="redis" --session="redis" --queue="redis" --redis-host="127.0.0.1"
     sed -i "s/DB_PASSWORD=/DB_PASSWORD=$DB_PASS/" .env
+    
+    # Database Migration
     php artisan migrate --seed --force --quiet
 
-    echo -e "\n${Y}--- CREATE ADMIN ACCOUNT ---${NC}"
-    php artisan p:user:make
+    # --- Admin Creation ---
+    php artisan p:user:make --email="$ADMIN_EMAIL" --username="$ADMIN_USER" --first_name="$ADMIN_FIRST" --last_name="$ADMIN_LAST" --password="$ADMIN_PASS" --admin=1
+
+    # Permissions
     chown -R www-data:www-data /var/www/pterodactyl/*
     
-    echo -e "${G}✔ PANEL READY! DB PASS: $DB_PASS${NC}"
-    sleep 2
+    echo -e "${G}✔ PANEL INSTALLED!${NC}"
+    echo -e "${W}Login at: ${CYAN}https://$FQDN${NC}"
+    echo -e "${W}DB Pass: ${Y}$DB_PASS${NC}"
+    sleep 3
 }
 
 install_wings() {
     animate_intro
-    echo -e "${B}>> Deploying Docker & Wings (Turbo)...${NC}"
+    echo -e "${B}>> Deploying Docker & Wings...${NC}"
     curl -sSL https://get.docker.com/ | CHANNEL=stable sh &> /dev/null & show_spinner
     systemctl enable --now docker &> /dev/null
 
@@ -117,7 +135,7 @@ install_wings() {
     sleep 2
 }
 
-# --- Standard Menu Logic ---
+# --- Main Logic ---
 while true; do
     animate_intro
     echo -e "  ${W}[1]${NC} ${G}FAST INSTALL PANEL${NC}"
@@ -132,8 +150,7 @@ while true; do
         1) install_panel ;;
         2) install_wings ;;
         3) install_panel; install_wings ;;
-        4) # Blueprint still requires manual build time due to Node.js
-           cd /var/www/pterodactyl && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt install -y nodejs && npm install -g yarn && curl -sL https://github.com/BlueprintFramework/framework/releases/latest/download/blueprint.sh -o blueprint.sh && bash blueprint.sh ;;
+        4) cd /var/www/pterodactyl && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt install -y nodejs && npm install -g yarn && curl -sL https://github.com/BlueprintFramework/framework/releases/latest/download/blueprint.sh -o blueprint.sh && bash blueprint.sh ;;
         5) rm -rf /var/www/pterodactyl && mysql -e "DROP DATABASE IF EXISTS panel;" ;;
         6) systemctl stop wings && rm -rf /etc/pterodactyl /usr/local/bin/wings ;;
         0) exit 0 ;;
